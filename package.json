@@ -1,0 +1,20 @@
+{
+  "name": "o-mai-chart",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "frontend",
+    "backend",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev:frontend": "bun run --filter '@o-mai/frontend' dev",
+    "dev:backend": "bun run --filter '@o-mai/backend' dev",
+    "build:frontend": "bun run --filter '@o-mai/frontend' build",
+    "train:recommend": "bun run --filter '@o-mai/backend' train:recommend"
+  }
+}

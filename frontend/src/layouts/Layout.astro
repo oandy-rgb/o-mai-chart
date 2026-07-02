@@ -1,0 +1,358 @@
+---
+// src/layouts/Layout.astro
+import "../styles/global.css";
+import WelcomePage from "../components/WelcomePage";
+import { API_BASE_URL } from "../lib/api";
+
+interface Props {
+    title: string;
+    activePage: "b50" | "todo" | "songs" | "badge" | "friends" | "recommend";
+}
+
+const { title, activePage } = Astro.props;
+
+const NAV = [
+    { href: "/", label: "📊 B50", key: "b50" },
+    { href: "/todo", label: "📝 待打", key: "todo" },
+    { href: "/songs", label: "🗂️ 歌曲", key: "songs" },
+    { href: "/badge", label: "🏆 牌子", key: "badge" },
+    { href: "/recommend", label: "🎯 推薦", key: "recommend" },
+    { href: "/friends", label: "👥 好友", key: "friends" },
+];
+
+const LOGO: Record<string, string> = {
+    b50: "maimai b50",
+    todo: "maimai 待打",
+    songs: "maimai 歌單",
+    badge: "maimai 牌子",
+    recommend: "maimai 推薦",
+    friends: "maimai 好友",
+};
+---
+
+<html lang="zh-TW">
+    <head>
+        <meta charset="UTF-8" />
+        <title>{title}</title>
+
+        <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+        />
+
+        <meta name="referrer" content="no-referrer" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@700;800;900&family=Noto+Sans+TC:wght@700;800;900&display=swap"
+            rel="stylesheet"
+        />
+    </head>
+
+    <body class="bg-gray-900 text-white min-h-screen px-3 py-4 sm:p-8">
+        <div id="welcome-overlay" style="display:none">
+            <WelcomePage client:only="preact" />
+        </div>
+
+        <div id="main-content" style="display:none">
+            <header
+                class="flex justify-between items-center mb-6 sm:mb-8 relative"
+            >
+                <div class="flex flex-col min-w-0">
+                    <a
+                        href="/"
+                        class="text-3xl sm:text-3xl font-black text-white hover:text-gray-300 transition-colors leading-none truncate"
+                    >
+                        {LOGO[activePage]}
+                    </a>
+
+                    <div
+                        id="user-display"
+                        class="mt-2 flex items-center gap-2 cursor-pointer group min-h-8"
+                        onclick="window.promptRename()"
+                    >
+                        <div
+                            class="w-2.5 h-2.5 rounded-full bg-green-500 shadow-[0_0_8px_#22c55e] shrink-0"
+                        >
+                        </div>
+                        <span
+                            id="display-name"
+                            class="text-base sm:text-sm font-bold text-gray-300 group-hover:text-yellow-400 transition-colors truncate"
+                        >
+                            載入中...
+                        </span>
+                        <span
+                            id="admin-badge"
+                            class="hidden rounded-md border border-cyan-400/30 bg-cyan-400/10 px-1.5 py-0.5 text-[10px] font-black leading-none text-cyan-200"
+                        >
+                            ADMIN
+                        </span>
+                        <svg
+                            class="w-3 h-3 text-gray-600 group-hover:text-yellow-400 opacity-0 group-hover:opacity-100 transition-all"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                        >
+                            <path
+                                d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+                            ></path>
+                        </svg>
+                    </div>
+                </div>
+
+                {/* 🖥️ 右側：電腦版導覽列 + 登出按鈕 (手機版 md 以下會隱藏) */}
+                <div class="hidden md:flex items-center gap-3">
+                    <nav class="flex gap-2">
+                        {
+                            NAV.map(({ href, label, key }) => (
+                                <a
+                                    href={href}
+                                    class={`flex items-center px-3 py-2 border rounded-lg text-sm font-bold transition-colors shadow-sm ${
+                                        activePage === key
+                                            ? "bg-[#174676]/60 hover:bg-[#174676] border-[#174676]"
+                                            : "bg-gray-800 hover:bg-gray-700 border-gray-700"
+                                    }`}
+                                >
+                                    {label}
+                                </a>
+                            ))
+                        }
+                    </nav>
+                    <button
+                        id="logout-btn-desktop"
+                        class="px-3 py-2 bg-gray-800 hover:bg-red-900 border border-gray-700 hover:border-red-700 rounded-lg text-xs text-gray-400 hover:text-red-400 font-bold transition-colors"
+                    >
+                        登出
+                    </button>
+                </div>
+
+                {/* 📱 漢堡按鈕 (僅在 md 以下手機版顯示) */}
+                <button
+                    id="mobile-menu-btn"
+                    class="md:hidden w-12 h-12 flex items-center justify-center rounded-xl bg-gray-800 border border-gray-700 text-gray-300 hover:text-white focus:outline-none"
+                >
+                    <svg
+                        class="w-6 h-6"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                    >
+                        <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M4 6h16M4 12h16M4 18h16"></path>
+                    </svg>
+                </button>
+
+                {/* 📱 手機版展開選單 (預設隱藏) */}
+                <div
+                    id="mobile-menu"
+                    class="hidden absolute top-full left-0 right-0 mt-3 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl z-50 overflow-hidden md:hidden"
+                >
+                    <nav class="flex flex-col p-2 gap-1.5">
+                        {
+                            NAV.map(({ href, label, key }) => (
+                                <a
+                                    href={href}
+                                    class={`flex items-center px-4 py-3.5 rounded-lg text-base font-bold transition-colors ${
+                                        activePage === key
+                                            ? "bg-[#174676] text-white"
+                                            : "text-gray-300 hover:bg-gray-700 hover:text-white"
+                                    }`}
+                                >
+                                    {label}
+                                </a>
+                            ))
+                        }
+                        <div class="h-px bg-gray-700 my-1 mx-2"></div>
+                        <button
+                            id="logout-btn-mobile"
+                            class="w-full text-left px-4 py-3.5 rounded-lg text-base font-bold text-red-400 hover:bg-red-900/50 transition-colors"
+                        >
+                            登出
+                        </button>
+                    </nav>
+                </div>
+            </header>
+
+            <slot />
+        </div>
+
+        <script define:vars={{ API_BASE_URL }}>
+            function apiUrl(path) {
+                return `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+            }
+
+            // 1. 玩家名稱顯示
+            async function updateDisplayName() {
+                const token = localStorage.getItem("maimai_sync_token");
+                if (!token) return;
+                const nameEl = document.getElementById("display-name");
+                const adminBadge = document.getElementById("admin-badge");
+                try {
+                    const res = await fetch(apiUrl("/api/me"), {
+                        headers: { Authorization: `Bearer ${token}` },
+                    });
+                    if (res.ok) {
+                        const data = await res.json();
+                        const name =
+                            data.display_name || data.username || "Player";
+                        localStorage.setItem("maimai_user_name", name);
+                        nameEl.innerText = name;
+                        adminBadge?.classList.toggle("hidden", !data.is_admin);
+                        return;
+                    }
+                    const payload = JSON.parse(atob(token.split(".")[1]));
+                    const name =
+                        localStorage.getItem("maimai_user_name") ||
+                        payload.email.split("@")[0];
+                    nameEl.innerText = name;
+                    adminBadge?.classList.add("hidden");
+                } catch (e) {
+                    nameEl.innerText = "Player";
+                    adminBadge?.classList.add("hidden");
+                }
+            }
+
+            // 2. 全域改名邏輯 (寫入資料庫)
+            window.promptRename = async function () {
+                const oldName =
+                    document.getElementById("display-name").innerText;
+                const newName = window.prompt(
+                    "請輸入新的玩家名稱 (2-16字)：",
+                    oldName,
+                );
+
+                if (newName && newName !== oldName) {
+                    const token = localStorage.getItem("maimai_sync_token");
+                    const res = await fetch(apiUrl("/api/player/update-name"), {
+                        method: "PATCH",
+                        headers: {
+                            "Content-Type": "application/json",
+                            Authorization: `Bearer ${token}`,
+                        },
+                        body: JSON.stringify({ newName: newName.trim() }),
+                    });
+
+                    const data = await res.json();
+                    if (res.ok) {
+                        localStorage.setItem(
+                            "maimai_user_name",
+                            newName.trim(),
+                        );
+                        updateDisplayName();
+                        alert("更名成功！現在好友可以搜尋到你了。");
+                        location.reload();
+                    } else {
+                        alert("錯誤: " + data.error);
+                    }
+                }
+            };
+
+            // 3. 登入/內容切換邏輯
+            window.handleMaimaiGoogleLogin = async function (response) {
+                const res = await fetch(apiUrl("/auth/google"), {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ idToken: response.credential }),
+                });
+                const data = await res.json();
+                if (data.token) {
+                    localStorage.setItem("maimai_sync_token", data.token);
+                    localStorage.setItem("maimai_user_name", data.username);
+                    location.reload();
+                }
+            };
+
+            function showMain() {
+                document.getElementById("welcome-overlay").style.display =
+                    "none";
+                document.getElementById("main-content").style.display = "block";
+                updateDisplayName();
+            }
+
+            function showWelcome() {
+                document.getElementById("welcome-overlay").style.display =
+                    "block";
+                document.getElementById("main-content").style.display = "none";
+
+                var gsiDiv = document.createElement("div");
+                gsiDiv.id = "g_id_onload";
+                gsiDiv.setAttribute(
+                    "data-client_id",
+                    "785041222690-7l200uqtgsoio0bugjd2a1bh8bti629j.apps.googleusercontent.com",
+                );
+                gsiDiv.setAttribute("data-callback", "handleMaimaiGoogleLogin");
+                gsiDiv.setAttribute("data-auto_prompt", "false");
+                document.body.appendChild(gsiDiv);
+
+                var script = document.createElement("script");
+                script.src = "https://accounts.google.com/gsi/client";
+                script.async = true;
+                script.onload = function () {
+                    if (window.google) {
+                        google.accounts.id.initialize({
+                            client_id:
+                                "785041222690-7l200uqtgsoio0bugjd2a1bh8bti629j.apps.googleusercontent.com",
+                            callback: handleMaimaiGoogleLogin,
+                        });
+
+                        function tryRender() {
+                            var btn = document.querySelector(".g_id_signin");
+                            if (btn) {
+                                google.accounts.id.renderButton(btn, {
+                                    type: "standard",
+                                    size: "large",
+                                });
+                            } else {
+                                setTimeout(tryRender, 100);
+                            }
+                        }
+                        tryRender();
+                    }
+                };
+                document.head.appendChild(script);
+            }
+
+            // 4. 統一登出邏輯
+            function handleLogout() {
+                localStorage.removeItem("maimai_sync_token");
+                localStorage.removeItem("maimai_user_name");
+                location.reload();
+            }
+            document
+                .getElementById("logout-btn-desktop")
+                ?.addEventListener("click", handleLogout);
+            document
+                .getElementById("logout-btn-mobile")
+                ?.addEventListener("click", handleLogout);
+
+            // 5. 漢堡選單切換邏輯
+            const mobileMenuBtn = document.getElementById("mobile-menu-btn");
+            const mobileMenu = document.getElementById("mobile-menu");
+
+            mobileMenuBtn?.addEventListener("click", () => {
+                mobileMenu.classList.toggle("hidden");
+            });
+
+            // 點擊空白處自動關閉漢堡選單
+            document.addEventListener("click", (e) => {
+                if (
+                    !mobileMenuBtn?.contains(e.target) &&
+                    !mobileMenu?.contains(e.target)
+                ) {
+                    mobileMenu?.classList.add("hidden");
+                }
+            });
+
+            // 初始化判斷
+            var token = localStorage.getItem("maimai_sync_token");
+            if (token) {
+                showMain();
+            } else {
+                showWelcome();
+            }
+        </script>
+    </body>
+</html>

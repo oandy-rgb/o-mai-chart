@@ -1,0 +1,8 @@
+---
+import Layout from '../layouts/Layout.astro'
+import TodoList from '../components/TodoList'
+---
+
+<Layout title="待打歌單 | maimai" activePage="todo">
+  <TodoList client:load />
+</Layout>
