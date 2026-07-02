@@ -64,8 +64,10 @@ services:
     depends_on:
       - maimai-frontend
       - maimai-score
+    # TUNNEL_TOKEN 可留待切換當下再填(遷移時需先只起 postgres,故不用硬性 :? 檢查)。
+    # 未填就啟動 cloudflared 會認證失敗——設好 token 再 `docker compose up -d cloudflared` 即可。
     environment:
-      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?請在 .env 設定 TUNNEL_TOKEN}
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
 
   # k8s CronJob 的等價物:以背景迴圈每 30 分跑一次訓練(順序執行,天然滿足 Forbid)
   maimai-recommend-trainer:
