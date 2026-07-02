@@ -34,8 +34,12 @@ curl -s http://127.0.0.1:3000/health                       # {"status":"ok"}
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8088/   # 200
 ```
 
-正式流量走 cloudflared,不需開 host port。public hostname 在 Cloudflare 端指向
-`http://maimai-frontend:80`(前端)與 `http://maimai-score:3000`(後端 API)。
+正式流量走 cloudflared,不需開 host port。新設 tunnel 時,把 public hostname 指向
+`http://maimai-frontend:80`(前端)與 `http://maimai-score:3000`(後端 API)即可。
+
+> 從 k3s 搬過來的既有 tunnel,其 ingress 用的是 cluster FQDN
+> (`maimai-score.maimai.svc.cluster.local` 等)。compose 已為兩個服務掛上對應的
+> 網路別名,讓那組舊設定免改也能解析(見 compose 內 `networks.aliases`)。
 
 ## 服務組成
 

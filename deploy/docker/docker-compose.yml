@@ -44,6 +44,12 @@ services:
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://mai.o-andy.com}
     ports:
       - "127.0.0.1:3000:3000"
+    # cloudflared tunnel 的 ingress 沿用 k8s 時期設定的完整 FQDN,
+    # 掛成網路別名讓 cloudflared 照原設定就能解析(免動 Cloudflare 端)。
+    networks:
+      default:
+        aliases:
+          - maimai-score.maimai.svc.cluster.local
 
   maimai-frontend:
     build:
@@ -56,6 +62,10 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:8088:80"
+    networks:
+      default:
+        aliases:
+          - maimai-frontend.maimai.svc.cluster.local
 
   cloudflared:
     image: cloudflare/cloudflared:latest
