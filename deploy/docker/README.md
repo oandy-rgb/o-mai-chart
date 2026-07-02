@@ -1,144 +1,118 @@
-# Docker 部署 + k3s → Docker 遷移 runbook
+# Docker 部署
 
-本目錄提供 o-mai-chart 的 **Docker Compose 單主機部署**,與既有的 **k3s(Flux GitOps)**
-部署並存(雙版本)。k3s manifests 仍在原 infra repo(`modules/k3s/services/maimai-*`),
-本目錄不動它。
+用 Docker Compose 跑一整套 maimai(前端 + 後端 + Postgres + 對外 tunnel + 推薦訓練)。
+單一主機、一個指令起來。
 
-服務名稱刻意與 k3s Service DNS 一致(`maimai-frontend`、`maimai-score`),
-因此既有的 cloudflared **token tunnel**(public hostname 指向
-`http://maimai-frontend:80`、`http://maimai-score:3000`)可直接沿用,
-**Cloudflare 端不需任何變更**。
+> 要把現有的 k3s 部署搬過來的維護者,請看 [MIGRATION-from-k3s.md](./MIGRATION-from-k3s.md)。
+> 下面是「從零部署一份」的說明。
 
----
+## 需求
 
-## 1. 日常操作(純 Docker,不涉及遷移)
+- Docker + Docker Compose v2
+- 對外方式二擇一:Cloudflare Tunnel 的 token(免開埠),或到 VPS 用 Caddy(見最後一節)
 
-```sh
-cd deploy/docker
-cp .env.example .env        # 填入實際值(見下方「取得既有 tunnel token」)
-docker compose build        # 從 ../../backend、../../frontend 的 Dockerfile 本機建置
-docker compose up -d
-docker compose ps
-docker compose logs -f maimai-score
-docker compose down         # 停止(保留資料 volume)
-```
-
-對外埠:正式流量走 cloudflared,不需開 host port。
-本機除錯埠(僅綁 127.0.0.1):後端 `:3000`、前端 `:8088`、Postgres `:5432`。
-
-### 取得既有 tunnel token(填入 .env 的 TUNNEL_TOKEN)
+## 快速開始
 
 ```sh
-kubectl -n maimai get secret cloudflared-token -o jsonpath='{.data.token}' | base64 -d
-```
+git clone git@github.com:oandy-rgb/o-mai-chart.git
+cd o-mai-chart/deploy/docker
 
----
-
-## 2. k3s → Docker 遷移 runbook(動到線上 + 真實資料,請逐步執行)
-
-> ⚠️ 這台機器目前 k3s 正跑正式服務,Postgres 有真實資料。
-> Flux 每 10 分鐘 reconcile 且 `prune: true`——**若不先 suspend Flux,
-> 手動縮容的 pod 會在 10 分鐘內被復原**,造成雙 tunnel 搶流量。務必照順序做。
-
-### 前置
-
-```sh
-cd deploy/docker
 cp .env.example .env
-# 填入:POSTGRES_PASSWORD(新設)、JWT_SECRET、TUNNEL_TOKEN(上面指令取得)、ADMIN_EMAILS
-# FRIEND_CODE_PEPPER 保留預設 dev-friend-code-pepper(維持好友身分連續性)
-docker compose build
-```
+# 產生兩組密鑰填進 .env:
+openssl rand -base64 32   # → POSTGRES_PASSWORD
+openssl rand -base64 32   # → JWT_SECRET
+# TUNNEL_TOKEN 填 Cloudflare Tunnel 的 token;FRIEND_CODE_PEPPER 保留預設即可
 
-### Step 1 — 凍結 Flux(避免復原被縮容的 workload)
-
-```sh
-flux suspend kustomization maimai-frontend maimai-score
-# maimai-postgres 先不 suspend——遷移時還要從它 dump
-```
-
-### Step 2 — 停掉 k3s 應用寫入來源(此刻起 mai/api 短暫中斷)
-
-```sh
-kubectl -n maimai patch cronjob maimai-recommend-model -p '{"spec":{"suspend":true}}'
-kubectl -n maimai scale deploy maimai-score maimai-frontend cloudflared --replicas=0
-kubectl -n maimai rollout status deploy/maimai-score --timeout=60s 2>/dev/null || true
-```
-
-### Step 3 — 從 k3s Postgres dump,匯入 Docker Postgres
-
-```sh
-# 先只起 docker 的 postgres(空庫)
-docker compose up -d maimai-postgres
-docker compose exec maimai-postgres sh -c 'until pg_isready -U maimai; do sleep 1; done'
-
-# 從 CNPG 取連線字串並 dump(在 CNPG pod 內執行,pg_dump 版本相符)
-K8S_URI=$(kubectl -n maimai get secret maimai-postgres-app -o jsonpath='{.data.uri}' | base64 -d)
-kubectl -n maimai exec maimai-postgres-1 -- \
-  pg_dump -d "$K8S_URI" --no-owner --no-privileges > maimai-dump.sql
-
-# 匯入 docker postgres
-docker compose exec -T maimai-postgres psql -v ON_ERROR_STOP=1 -U maimai -d maimai < maimai-dump.sql
-
-# 抽查筆數
-docker compose exec maimai-postgres psql -U maimai -d maimai \
-  -c 'select (select count(*) from player) players, (select count(*) from score) scores;'
-```
-
-### Step 4 — 起 Docker 全棧(含新的 cloudflared,接管 tunnel)
-
-```sh
-docker compose up -d
+docker compose up -d --build
 docker compose ps
-# 本機驗證(繞過 tunnel)
-curl -s http://127.0.0.1:3000/health          # {"status":"ok"}
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8088/
 ```
 
-### Step 5 — 驗證正式網域
+起來後驗證(本機除錯埠,僅綁 127.0.0.1):
 
 ```sh
-curl -s https://api.o-andy.com/health
-curl -s -o /dev/null -w '%{http_code}\n' https://mai.o-andy.com/
+curl -s http://127.0.0.1:3000/health                       # {"status":"ok"}
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8088/   # 200
 ```
 
-登入一次(Google)確認 JWT 正常。→ 全綠即遷移完成。
+正式流量走 cloudflared,不需開 host port。public hostname 在 Cloudflare 端指向
+`http://maimai-frontend:80`(前端)與 `http://maimai-score:3000`(後端 API)。
 
----
+## 服務組成
 
-## 3. 回滾(Step 5 驗證失敗時)
+| 服務 | 說明 | 對外埠(僅 127.0.0.1) |
+|---|---|---|
+| `maimai-frontend` | Astro 靜態站(nginx) | `:8088` |
+| `maimai-score` | 後端 API(Bun + Hono) | `:3000` |
+| `maimai-postgres` | PostgreSQL 17 + 資料 volume | `:5432` |
+| `cloudflared` | Cloudflare Tunnel 對外 | — |
+| `maimai-recommend-trainer` | 每 30 分訓練推薦模型(k8s CronJob 的等價物) | — |
 
-Docker 期間寫入的資料會捨棄;k3s Postgres 全程只讀,未受影響,可安全回滾。
+## 常用操作
 
 ```sh
-docker compose down
-kubectl -n maimai scale deploy maimai-score maimai-frontend cloudflared --replicas=1
-kubectl -n maimai patch cronjob maimai-recommend-model -p '{"spec":{"suspend":false}}'
-flux resume kustomization maimai-frontend maimai-score
+docker compose logs -f maimai-score      # 看後端日誌
+docker compose restart maimai-score      # 重啟單一服務
+docker compose up -d --build             # 改了程式碼後重建並更新
+docker compose down                      # 停止(保留資料 volume)
+docker compose down -v                   # 停止並刪除資料(⚠️ 會清空 Postgres)
 ```
 
----
+## 環境變數(.env)
 
-## 4. 永久下線 k3s(觀察數日、確認穩定後)
+| 變數 | 必填 | 說明 |
+|---|---|---|
+| `POSTGRES_PASSWORD` | ✅ | 新建 Postgres 的密碼(自訂) |
+| `JWT_SECRET` | ✅ | 簽登入 token 的密鑰;換值會使既有登入失效 |
+| `TUNNEL_TOKEN` | ✅* | Cloudflare Tunnel token(用 tunnel 對外時) |
+| `FRIEND_CODE_PEPPER` | | 好友碼雜湊 pepper,預設 `dev-friend-code-pepper` |
+| `ADMIN_EMAILS` | | 管理員 email(逗號分隔),用於別名審核等 admin API |
+| `FRONTEND_ORIGIN` | | 允許的前端來源(CORS),預設 `https://mai.o-andy.com` |
+| `PUBLIC_API_BASE_URL` | | 前端要打的後端網址(**編譯期**注入),預設 `https://api.o-andy.com` |
+| `RECOMMEND_FACTORS` / `RECOMMEND_EPOCHS` | | 推薦模型訓練參數 |
 
-Flux `prune: true`,手動刪除會被復原。正式下線要**從 infra git repo** 移除
-`maimai-frontend`、`maimai-score` 的 Kustomization(讓 Flux prune),
-或持續 `flux suspend`。
+## 要開一個「完全獨立」的實例(別人自架)
 
-`maimai-postgres` 建議**最後**再處理:先確認 Docker 側資料無誤、並已有新的備份機制
-(見下)後,再下線;下線前保留 CNPG 的 R2 barman 備份作為安全網。
+上面的預設值都是指向本專案作者的正式站。若要架**你自己的**一份,需自訂這幾處:
 
----
+1. **Google OAuth client id**(登入用,寫死在兩處,需換成你自己的):
+   - `backend/src/index.ts` 的 `GOOGLE_CLIENT_ID`
+   - `frontend/src/layouts/Layout.astro`(`data-client_id` 與 `client_id`)
+   在 Google Cloud Console 開一個 OAuth Web client,授權你的網域。
+2. **後端網址**:`.env` 設 `PUBLIC_API_BASE_URL=https://你的-api-網域`(compose 已接 build arg)。
+3. **前端來源**:`.env` 設 `FRONTEND_ORIGIN=https://你的-前端-網域`。
+4. **Bookmarklet 網域**:`frontend/src/components/WelcomePage.tsx` 內的 `mai.o-andy.com`
+   換成你的前端網域(它載入 `/sync.js`)。
 
-## 5. 已知事項 / 待辦
+> 若只是幫作者把服務部署到另一台(同網域、同 OAuth),以上都不用改,照「快速開始」即可。
 
-- **JWT_SECRET 若與 k3s 不同**:既有登入 token 失效,使用者需重新 Google 登入(低摩擦)。
-  k3s 版未設 JWT_SECRET(用 dev 預設),Docker 版設了真值 → 屬預期行為。
-- **FRIEND_CODE_PEPPER**:保留 `dev-friend-code-pepper`(k3s 實際使用值),
-  好友身分才能對應到日後新提交的好友碼。
-- **備份**:Docker 版沒有 CNPG 的 R2 barman 自動備份。遷移後請補上
-  `pg_dump` → R2/離線 的定時備份(可比照 `maimai-recommend-trainer` 用一個
-  排程容器)。這是遷移後的 follow-up,尚未包含在本 compose。
-- **PUBLIC_API_BASE_URL**:前端為編譯期靜態注入,預設 `https://api.o-andy.com`。
-  要改需在 `frontend/Dockerfile` 接 `ARG PUBLIC_API_BASE_URL` 並於 compose 傳 build args
-  (compose 內已留註解位置)。
+## 待辦 / 已知限制
+
+- **備份**:本 compose 沒有等同 CloudNativePG 的自動異地備份。正式營運請補一個
+  `pg_dump → R2/S3` 的定時容器(可比照 `maimai-recommend-trainer` 的迴圈寫法)。
+- **推薦訓練排程**:用 sleep 迴圈近似 cron;容器重啟會重算 30 分計時,無執行歷史。
+
+## 上 VPS:改用 Caddy 對外(免 tunnel)
+
+VPS 有公網 IP、80/443 是空的,可用 Caddy 自動 HTTPS 取代 cloudflared。
+在 compose 加一個服務:
+
+```yaml
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on: [maimai-frontend, maimai-score]
+# volumes: 區塊加 caddy-data:
+```
+
+`Caddyfile`(全部設定就這幾行,自動申請/續期 TLS):
+
+```
+你的前端網域   { reverse_proxy maimai-frontend:80 }
+你的後端網域   { reverse_proxy maimai-score:3000 }
+```
+
+DNS 把兩個網域指到 VPS IP → `docker compose up -d` → 完成,連 cloudflared 都不用。

@@ -11,6 +11,11 @@ COPY frontend/package.json frontend/package.json
 COPY backend/package.json backend/package.json
 RUN bun install --frozen-lockfile
 
+# 前端 API base 是編譯期注入(Astro 讀 import.meta.env.PUBLIC_API_BASE_URL)。
+# 預設指向作者正式站;自架時由 compose 傳 build arg 覆蓋。
+ARG PUBLIC_API_BASE_URL
+ENV PUBLIC_API_BASE_URL=${PUBLIC_API_BASE_URL}
+
 # 帶入原始碼並建置
 COPY packages/shared packages/shared
 COPY frontend frontend

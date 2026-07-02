@@ -49,10 +49,9 @@ services:
     build:
       context: ../..
       dockerfile: frontend/Dockerfile
-      # 前端 API base 是編譯期注入;預設 https://api.o-andy.com。
-      # 若要改,取消下方註解(需先在 frontend/Dockerfile 接 ARG,見 README)。
-      # args:
-      #   PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-https://api.o-andy.com}
+      # 前端 API base 是編譯期注入。自架時在 .env 設 PUBLIC_API_BASE_URL 即可覆蓋。
+      args:
+        PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-https://api.o-andy.com}
     image: o-mai-chart/frontend:local
     restart: unless-stopped
     ports:
