@@ -1,0 +1,97 @@
+# o-mai-chart — Docker Compose 部署(單主機)
+#
+# 服務名稱刻意與 k3s 的 Service DNS 一致(maimai-frontend / maimai-score),
+# 這樣既有的 cloudflared token tunnel(public hostname 指向
+# http://maimai-frontend:80 與 http://maimai-score:3000)可直接沿用,
+# Cloudflare 端不需任何變更。
+#
+# build context = repo 根(../..),沿用 backend/Dockerfile 與 frontend/Dockerfile。
+
+services:
+  maimai-postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: maimai
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?請在 .env 設定 POSTGRES_PASSWORD}
+      POSTGRES_DB: maimai
+    volumes:
+      - maimai-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U maimai -d maimai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # 僅綁 localhost,供遷移/除錯時連線;正式流量走 cloudflared,不需對外
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  maimai-score:
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+    image: o-mai-chart/backend:local
+    restart: unless-stopped
+    depends_on:
+      maimai-postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://maimai:${POSTGRES_PASSWORD}@maimai-postgres:5432/maimai
+      JWT_SECRET: ${JWT_SECRET:?請在 .env 設定 JWT_SECRET}
+      FRIEND_CODE_PEPPER: ${FRIEND_CODE_PEPPER:-dev-friend-code-pepper}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://mai.o-andy.com}
+    ports:
+      - "127.0.0.1:3000:3000"
+
+  maimai-frontend:
+    build:
+      context: ../..
+      dockerfile: frontend/Dockerfile
+      # 前端 API base 是編譯期注入;預設 https://api.o-andy.com。
+      # 若要改,取消下方註解(需先在 frontend/Dockerfile 接 ARG,見 README)。
+      # args:
+      #   PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-https://api.o-andy.com}
+    image: o-mai-chart/frontend:local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8088:80"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    depends_on:
+      - maimai-frontend
+      - maimai-score
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?請在 .env 設定 TUNNEL_TOKEN}
+
+  # k8s CronJob 的等價物:以背景迴圈每 30 分跑一次訓練(順序執行,天然滿足 Forbid)
+  maimai-recommend-trainer:
+    image: o-mai-chart/backend:local
+    restart: unless-stopped
+    depends_on:
+      maimai-postgres:
+        condition: service_healthy
+      maimai-score:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://maimai:${POSTGRES_PASSWORD}@maimai-postgres:5432/maimai
+      RECOMMEND_FACTORS: ${RECOMMEND_FACTORS:-5}
+      RECOMMEND_EPOCHS: ${RECOMMEND_EPOCHS:-36}
+    command:
+      - sh
+      - -c
+      - |
+        sleep 60
+        while true; do
+          echo "[trainer] $(date -u) start"
+          bun run train:recommend || echo "[trainer] train failed"
+          echo "[trainer] $(date -u) done; sleep 1800"
+          sleep 1800
+        done
+
+volumes:
+  maimai-postgres-data:
